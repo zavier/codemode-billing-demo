@@ -1,5 +1,5 @@
-// 审计一次运行的会话记录：调用了哪些工具、每次嵌套调用的名字和参数。
-// 用法: node scripts/check-session.mjs <session.jsonl>
+// 审计一次 pi 会话：顶层工具调用、codemode 脚本里的嵌套调用、token 用量。
+// 用法: node scripts/check-session.mjs results/sessions-B/<session>.jsonl
 import fs from "node:fs";
 
 const path = process.argv[2];
@@ -8,25 +8,21 @@ if (!path) { console.error("用法: node scripts/check-session.mjs <session.json
 const top = {};
 const nested = [];
 const usage = {};
-let resultText = "";
-
-const walk = (o) => {
-  if (Array.isArray(o)) return o.forEach(walk);
-  if (!o || typeof o !== "object") return;
-  for (const [k, v] of Object.entries(o)) {
-    if (k === "usage" && v && typeof v === "object")
-      for (const [uk, uv] of Object.entries(v)) if (typeof uv === "number") usage[uk] = uv;
-    if (k === "nestedCalls" && v && typeof v === "object")
-      for (const c of v.calls || []) nested.push(c);
-    if (k === "name" && typeof v === "string" && !k.startsWith("nested")) top[v] = (top[v] || 0) + 1;
-    if (k === "text" && typeof v === "string" && v.length > resultText.length && !v.includes("{") ) resultText = v;
-    walk(v);
-  }
-};
 
 for (const line of fs.readFileSync(path, "utf8").split("\n")) {
   if (!line.trim()) continue;
-  try { walk(JSON.parse(line)); } catch {}
+  let d; try { d = JSON.parse(line); } catch { continue; }
+  const m = d.message;
+  if (!m || typeof m !== "object") continue;
+
+  if (m.role === "assistant") {
+    if (m.usage && typeof m.usage === "object")
+      for (const [k, v] of Object.entries(m.usage)) if (typeof v === "number") usage[k] = v;
+    for (const block of m.content || [])
+      if (block?.type === "toolCall") top[block.name] = (top[block.name] || 0) + 1;
+  } else if (m.role === "toolResult") {
+    for (const c of m.nestedCalls?.calls || []) nested.push(c);
+  }
 }
 
 console.log("顶层工具调用:", JSON.stringify(top));

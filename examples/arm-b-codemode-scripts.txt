@@ -1,16 +1,16 @@
 # B 组（只有 codemode）实际生成的脚本
 
-这是某一次真实运行的完整记录，由 `scripts/extract-codemode.mjs` 从会话 JSONL 里导出。
-模型共写了 6 段脚本，注意看它自己的分工：
+某一次真实运行的完整记录，由 `scripts/extract-codemode.mjs` 从会话 JSONL 里导出。
+模型一共写了 6 段脚本，分工如下：
 
-  1. 试探 searchTools 的用法（用错了签名，报错）
-  2. 改正签名，一次成功
+  1. 试探 searchTools 的用法（签名写错，报错）
+  2. 改正签名，拿到工具列表
   3. 先看原始数据长什么样（只打印前 1200 字符）
-  4. 解析 + 聚合，把 Top 客户用 store() 存下来
-  5. load() 出来，Promise.all 并发改状态
+  4. 解析 + 聚合，把结论用 store() 存下来
+  5. load() 取回结论，Promise.all 并发改状态
   6. 复核：重新拉发票、逐条 get_invoice 对账金额
 
-第 4、5 段的 store()/load() 是关键——状态存在会话里，不占上下文。
+第 4、5 段的 store()/load() 是关键——结论存在会话里，不占上下文。
 
 ---
 

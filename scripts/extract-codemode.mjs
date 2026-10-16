@@ -11,16 +11,18 @@ const results = []; // { text }
 const walk = (o) => {
   if (Array.isArray(o)) return o.forEach(walk);
   if (!o || typeof o !== "object") return;
-  const name = o.name ?? o.toolName;
-  const args = o.arguments ?? o.input ?? o.args;
-  if (name === "codemode" && args && typeof args === "object") {
-    const code = args.code ?? args.script ?? args.source;
-    if (typeof code === "string") calls.push(code);
-  }
   const content = o.content;
-  if (Array.isArray(content) && typeof o.role === "string" && o.role === "toolResult") {
-    const text = content.filter((c) => c?.type === "text").map((c) => c.text).join("\n");
-    if (text) results.push(text);
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block?.type === "toolCall" && block.name === "codemode") {
+        const code = block.arguments?.code ?? block.arguments?.script;
+        if (typeof code === "string") calls.push(code);
+      }
+    }
+    if (o.role === "toolResult") {
+      const text = content.filter((c) => c?.type === "text").map((c) => c.text).join("\n");
+      if (text) results.push(text);
+    }
   }
   for (const v of Object.values(o)) walk(v);
 };

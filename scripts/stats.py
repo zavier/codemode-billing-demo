@@ -1,27 +1,37 @@
-import json, sys, os
-p = sys.argv[1]
-top, nested, usage = {}, 0, {}
-def walk(o):
-    global nested
-    if isinstance(o, dict):
-        for k, v in o.items():
-            if k == "name" and isinstance(v, str): top[v] = top.get(v, 0) + 1
-            if k == "usage" and isinstance(v, dict): usage.update({x: y for x, y in v.items() if isinstance(y, (int, float))})
-            if k == "nestedCalls" and isinstance(v, dict):
-                for c in v.get("calls") or []:
-                    if isinstance(c, dict):
-                        n = c.get("name") or c.get("tool") or "?"
-                        top["nested:" + str(n)] = top.get("nested:" + str(n), 0) + 1
-                        nested += 1
-            walk(v)
-    elif isinstance(o, list):
-        for v in o: walk(v)
-for line in open(p):
+#!/usr/bin/env python3
+"""统计一次 pi 会话的工具调用。
+用法: python3 scripts/stats.py <session.jsonl>
+
+顶层调用数只从 assistant 消息的 content[].toolCall 里数（一次调用一条记录）；
+嵌套调用读 toolResult 消息的 nestedCalls。
+"""
+import json, sys
+from collections import Counter
+
+path = sys.argv[1]
+top, nested = Counter(), Counter()
+usage = {}
+for line in open(path):
     line = line.strip()
     if not line: continue
-    try: walk(json.loads(line))
-    except: pass
-print("file:", os.path.basename(p))
-print("calls:", {k: v for k, v in sorted(top.items())})
-print("nested total:", nested)
-print("usage:", {k: usage[k] for k in ("input","output","totalTokens","cacheRead","cacheWrite") if k in usage})
+    try: d = json.loads(line)
+    except: continue
+    m = d.get("message") or {}
+    if not isinstance(m, dict): continue
+    role = m.get("role")
+    if role == "assistant":
+        if isinstance(m.get("usage"), dict):
+            usage.update({k: v for k, v in m["usage"].items() if isinstance(v, (int, float))})
+        for block in m.get("content") or []:
+            if isinstance(block, dict) and block.get("type") == "toolCall":
+                top[block.get("name") or "?"] += 1
+    elif role == "toolResult":
+        nc = m.get("nestedCalls")
+        if isinstance(nc, dict):
+            for c in nc.get("calls") or []:
+                if isinstance(c, dict): nested[c.get("name") or "?"] += 1
+
+print("顶层调用:", dict(top), f"（合计 {sum(top.values())}）")
+print("嵌套调用:", dict(nested), f"（合计 {sum(nested.values())}）")
+keys = ["input", "output", "totalTokens", "cacheRead", "cacheWrite"]
+print("usage:", "  ".join(f"{k}={usage[k]}" for k in keys if k in usage))
