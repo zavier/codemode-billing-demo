@@ -1,6 +1,6 @@
 # codemode billing demo
 
-配套文章《codemode：让 Agent 用代码调工具，把循环留在沙箱、把账留在会话》的可复现实验。
+配套文章《codemode：让 Agent 学会写代码调工具》的可复现实验。
 
 场景：一个只通过 MCP 暴露的 billing 服务（3 个工具），任务是「找出 overdue 金额合计最高的客户，把它的 overdue 发票改成 signed」。
 同一台机器、同一个模型，只改给模型的工具集，对比三组。
