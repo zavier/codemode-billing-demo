@@ -1,0 +1,141 @@
+# B 组（只有 codemode）实际生成的脚本
+
+这是某一次真实运行的完整记录，由 `scripts/extract-codemode.mjs` 从会话 JSONL 里导出。
+模型共写了 6 段脚本，注意看它自己的分工：
+
+  1. 试探 searchTools 的用法（用错了签名，报错）
+  2. 改正签名，一次成功
+  3. 先看原始数据长什么样（只打印前 1200 字符）
+  4. 解析 + 聚合，把 Top 客户用 store() 存下来
+  5. load() 出来，Promise.all 并发改状态
+  6. 复核：重新拉发票、逐条 get_invoice 对账金额
+
+第 4、5 段的 store()/load() 是关键——状态存在会话里，不占上下文。
+
+---
+
+
+========================================================================
+codemode 脚本 #1   (145 字符)
+========================================================================
+const tools_ = await searchTools({ query: "billing invoice overdue", namespace: "mcp__billing" });
+console.log(JSON.stringify(tools_, null, 2));
+
+
+[执行结果] Script error:
+            Error: searchTools() expects a query string
+            No tool calls were made.
+
+========================================================================
+codemode 脚本 #2   (97 字符)
+========================================================================
+const t = await searchTools("billing invoice overdue");
+console.log(JSON.stringify(t, null, 2));
+
+
+[执行结果] [
+              {
+                "name": "mcp__billing__set_invoice_status",
+                "description": "Update the in-memory status of an invoice and return the result.\n\ncodemode tool declaration:\n```ts\ndeclare const tools: { mcp__billing__set_invoice_status(args: {\n  // Invoice id, e.g. INV-0001\n  id: string;\n  // New status, e.g. signed, pending, overdue\n  status: string;\n}): Promise<{ content: Array<{ data?: string; mimeType?: string; text?: string; type: \"text\" | \"image\" | \"audio\" | \"resource_link\" | \"resource\"; [key: string]: unknown; }>; isError?: boolean; struct
+
+========================================================================
+codemode 脚本 #3   (187 字符)
+========================================================================
+const res = await tools.mcp__billing__list_invoices({});
+const raw = res.content.map(c => c.text ?? "").join("\n");
+console.log(raw.slice(0, 1200));
+console.log("---LEN---", raw.length);
+
+
+[执行结果] id=INV-0001 customer=Acme amount=6854.93 status=signed
+            id=INV-0002 customer=Globex amount=7024.72 status=pending
+            id=INV-0003 customer=Initech amount=5379.73 status=overdue
+            id=INV-0004 customer=Umbrella amount=3859.83 status=signed
+            id=INV-0005 customer=Hooli amount=431.94 status=pending
+            id=INV-0006 customer=Stark amount=1230.06 status=overdue
+
+========================================================================
+codemode 脚本 #4   (1072 字符)
+========================================================================
+const res = await tools.mcp__billing__list_invoices({});
+const raw = res.content.map(c => c.text ?? "").join("\n");
+const rows = raw.split("\n").map(l => l.trim()).filter(Boolean).map(l => {
+  const m = l.match(/^id=(\S+) customer=(\S+) amount=([\d.]+) status=(\S+)$/);
+  return m ? { id: m[1], customer: m[2], amount: parseFloat(m[3]), status: m[4] } : { bad: l };
+});
+const bad = rows.filter(r => r.bad);
+console.log("total rows:", rows.length, "unparsed:", bad.length, JSON.stringify(bad.slice(0,5)));
+const agg = {};
+for (const r of rows) {
+  if (r.status !== "overdue") continue;
+  agg[r.customer] = agg[r.customer] || { sum: 0, ids: [] };
+  agg[r.customer].sum += r.amount;
+  agg[r.customer].ids.push(r.id);
+}
+const sorted = Object.entries(agg).map(([c, v]) => ({ customer: c, sum: Math.round(v.sum*100)/100, count: v.ids.length, ids: v.ids })).sort((a,b)=>b.sum-a.sum);
+console.log(JSON.stringify(sorted, null, 2));
+store("top", sorted[0]);
+store("statuses", { total: rows.length, statusCounts: rows.reduce((a,r)=>{a[r.status]=(a[r.status]||0)+1;return a;},{}) });
+
+
+[执行结果] total rows: 200 unparsed: 0 []
+            [
+              {
+                "customer": "Initech",
+                "sum": 52383.89,
+                "count": 9,
+
+========================================================================
+codemode 脚本 #5   (421 字符)
+========================================================================
+const top = load("top");
+console.log("TARGET:", JSON.stringify(top));
+const results = await Promise.all(top.ids.map(id => tools.mcp__billing__set_invoice_status({ id, status: "signed" })));
+const out = results.map((r, i) => ({ id: top.ids[i], isError: r.isError === true, text: (r.content||[]).map(c=>c.text??c.data??"").join(" ").slice(0,200) }));
+console.log(JSON.stringify(out, null, 2));
+store("updateResults", out);
+
+
+[执行结果] TARGET: {"customer":"Initech","sum":52383.89,"count":9,"ids":["INV-0003","INV-0027","INV-0051","INV-0075","INV-0099","INV-0123","INV-0147","INV-0171","INV-0195"]}
+            [
+              {
+                "id": "INV-0003",
+                "isError": false,
+                "text": "ok id=INV-0003 status=signed"
+
+========================================================================
+codemode 脚本 #6   (1449 字符)
+========================================================================
+const top = load("top");
+const res = await tools.mcp__billing__list_invoices({});
+const raw = res.content.map(c => c.text ?? "").join("\n");
+const rows = raw.split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{
+  const m = l.match(/^id=(\S+) customer=(\S+) amount=([\d.]+) status=(\S+)$/);
+  return m?{id:m[1],customer:m[2],amount:+m[3],status:m[4]}:null;
+}).filter(Boolean);
+const initOverdue = rows.filter(r=>r.customer==="Initech" && r.status==="overdue");
+console.log("Initech overdue remaining:", initOverdue.length);
+console.log("Initech signed count:", rows.filter(r=>r.customer==="Initech"&&r.status==="signed").length);
+// verify amounts unchanged for target ids
+const detail = await Promise.all(top.ids.map(id=>tools.mcp__billing__get_invoice({id})));
+let sum=0; const ver=[];
+for (let i=0;i<top.ids.length;i++){
+  const t=(detail[i].content||[]).map(c=>c.text??c.data??"").join(" ");
+  const amt=parseFloat((t.match(/amount=([\d.]+)/)||[])[1]);
+  const st=(t.match(/status=(\S+)/)||[])[1];
+  sum+=amt; ver.push({id:top.ids[i],amt,st});
+}
+console.log(JSON.stringify(ver));
+console.log("verified sum:", Math.round(sum*100)/100, "listed sum:", top.sum);
+// other customers overdue totals unchanged?
+const agg={}; for(const r of rows) if(r.status==="overdue"){agg[r.customer]=(agg[r.customer]||0)+r.amount;}
+console.log("overdue totals now:", JSON.stringify(Object.fromEntries(Object.entries(agg).map(([k,v])=>[k,Math.round(v*100)/100]))));
+
+
+[执行结果] Initech overdue remaining: 0
+            Initech signed count: 17
+            [{"id":"INV-0003","amt":5379.73,"st":"signed"},{"id":"INV-0027","amt":175.38,"st":"signed"},{"id":"INV-0051","amt":7816.88,"st":"signed"},{"id":"INV-0075","amt":7411.47,"st":"signed"},{"id":"INV-0099","amt":4689.97,"st":"signed"},{"id":"INV-0123","amt":6119.74,"st":"signed"},{"id":"INV-0147","amt":5259.06,"st":"signed"},{"id":"INV-0171","amt":6913.83,"st":"signed"},{"id":"INV-0195","amt":8617.83,"st":"signed"}]
+            verified sum: 52383.89 listed sum: 52383.89
+            overdue totals now: {"Stark":29757.92,"
+
+共 6 个脚本，6 条结果记录。
